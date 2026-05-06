@@ -117,5 +117,6 @@ assert final_df["bank"].isnull().sum() == 0, "some gvkeys missing bank classific
 assert (final_df["bank"] == "Bank").sum() > 0, "no banks found"
 
 final_df = final_df.replace([np.inf, -np.inf], np.nan)
+final_df = final_df.dropna()
 
 final_df.to_csv(PROD_DATA, index=False)

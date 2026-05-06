@@ -27,7 +27,8 @@ PROD_DATA = os.path.join(DATA_FOLDER, "panel_data.csv")
 SIC_DATA = os.path.join(DATA_FOLDER, "sic_classification.csv")
 
 # results files
-SUMMARY_STATS = os.path.join(RESULTS_FOLDER, "summary_stats")
+SUMMARY_STATS_SIMPLE = os.path.join(RESULTS_FOLDER, "summary_stats_simple")
+SUMMARY_STATS_GROUP = os.path.join(RESULTS_FOLDER, "summary_stats_group")
 
 # MAKE FOLDERS
 os.makedirs(DATA_FOLDER, exist_ok=True)
