@@ -68,7 +68,7 @@ df["euler_equation"] = (
 )
 
 # specifying financial frictions
-df["equity"] = df["assets"] - df["debt"]
+df["equity"] = (df["assets"] - df["debt"]).clip(lower=0)
 df["leverage"] = df["assets"] / df["equity"]
 df["net_worth"] = 1 / df["leverage"]
 
@@ -83,12 +83,19 @@ df["return_std"] = group_transform(
 )
 df["port_std"] = df["vix"] * (df["return_std"] / df["vix_std"])
 df["var_sigma"] = df["assets"] / (df["port_std"] * df["equity"])
-df["var_pct"] = norm.cdf(df["var_sigma"])
 
 # financial friction derivatives
 df["d_leverage"] = -df["debt"] / (df["equity"] ** 2)
 df["d_net_worth"] = df["debt"] / (df["assets"] ** 2)
 df["d_var_pct"] = df["d_leverage"] * norm.pdf(df["var_sigma"]) / df["port_std"]
+
+#############################
+### DATA CLEANING (extra) ###
+#############################
+
+for var in ["leverage", "var_sigma"]:
+    df[var] = df[var].clip(lower=df[var].quantile(0.01), upper=df[var].quantile(0.99))
+df["var_pct"] = norm.cdf(df["var_sigma"])
 
 ######################
 ### SAVING DATASET ###
