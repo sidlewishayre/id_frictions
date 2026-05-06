@@ -12,20 +12,22 @@ from settings import (
     ASSETS_COL_COMPUSTAT,
     DEBT_COL_COMPUSTAT,
     RETURN_COLS_CRSP,
+    WRDS_DATA,
+    SIC_DATA,
 )
 from get_data.get_sic_classification import get_sic_classification
-from other_utils.datetime_utils import quarter_collapse
-from timeseries_utils.group_apply import group_transform
 
 sys.path.append("/home/sidlh/Documents/reusable_code")
+from timeseries_utils.group_apply import group_transform
+from other_utils.datetime_utils import quarter_collapse
 from wrds_management.pull_wrds import get_wrds_connection
 from sql_management.sql_utils import get_sql_list
 
-con = get_wrds_connection(username=WRDS_USERNAME)
-sic_list = get_sic_classification()
-
 
 def get_data():
+
+    con = get_wrds_connection(username=WRDS_USERNAME)
+    sic_list = get_sic_classification()
 
     ######################
     ### get GVKEY list ###
@@ -53,7 +55,7 @@ def get_data():
     # forward fill to end of quarter
     df = group_transform(
         df,
-        apply_fn=lambda x: x.ffill(limit=3),
+        apply_fn=lambda x: x.ffill(limit=3),  # TODO make sure only fill within quarter
         panel_var=["gvkey"],
         time_var="datadate",
         return_series=False,
@@ -93,6 +95,7 @@ def get_data():
     assert return_df[["permno", "date"]].value_counts().max() == 1
     return_df["market_cap"] = return_df["prc"].abs() * return_df["shrout"]
     return_df["gross_ret"] = return_df["ret"] + 1
+    # TODO deal with missing quarterly reports
     ret_df_q = quarter_collapse(
         return_df.sort_values("date"),
         date_col="date",
@@ -120,10 +123,21 @@ def get_data():
     df["debt"] = df[DEBT_COL_COMPUSTAT].sum(axis=1)
     df["assets"] = df[ASSETS_COL_COMPUSTAT].sum(axis=1)
     df = df.rename(columns={"ret": "return"})
-    df = df[["gvkey", "date", "debt", "assets", "return"]].copy()
-    return df
+
+    final_df = df[["gvkey", "date", "debt", "assets", "return"]].copy()
+
+    # make sic_data
+    sic_list_df = sic_list.reset_index().rename(columns={"sic_code": "sic"})
+    sic_list_df["sic"] = sic_list_df["sic"].astype(str)
+    sic_data = (
+        final_df[["gvkey"]].drop_duplicates().merge(gvkey_list).merge(sic_list_df)
+    )
+    assert final_df["gvkey"].isin(sic_data.gvkey).all()
+
+    return final_df, sic_data
 
 
 if __name__ == "__main__":
-    df = get_data()
-    df.to_csv(os.path.join(CWD, "data", "panel_data.csv"), index=False)
+    df, sic_data = get_data()
+    df.to_csv(WRDS_DATA, index=False)
+    sic_data.to_csv(SIC_DATA, index=False)
