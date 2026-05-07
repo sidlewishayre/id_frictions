@@ -17,32 +17,15 @@ def within_operator(y, x, within_transform=True, param_estimate=False):
     Returns Qx and/or beta = (X'X)^(-1) X'y.
     """
 
-    # Ensure 2D
-    y = np.atleast_2d(y)
-    if y.shape[0] < y.shape[1]:
-        y = y.T
-
-    x = np.atleast_2d(x)
-    if x.shape[0] < x.shape[1]:
-        x = x.T
-
-    T = x.shape[0]
-    I = np.eye(T)
-
-    # Compute (Z'Z)^(-1) Z'
-    XtX = x.T @ x
-    P = x @ np.linalg.solve(XtX, x.T)
-    Q = I - P
-
-    Qx = Q @ y
-    beta = np.linalg.solve(XtX, x.T @ y)
+    beta = np.linalg.lstsq(x, y, rcond=None)[0]
+    Qy = y - x @ beta
 
     if within_transform and not param_estimate:
-        return Qx
+        return Qy
     if param_estimate and not within_transform:
         return beta
     if within_transform and param_estimate:
-        return Qx, beta
+        return Qy, beta
 
     raise ValueError("Must specify residuals=True or params=True")
 
@@ -117,7 +100,7 @@ def random_coefs(df, y_var, x_vars, group_vars, z_vars=None):
         beta_results = pd.DataFrame(beta_results)
         beta_nume = np.sum(beta_results["beta_nume"], axis=0)
         beta_denom = np.sum(beta_results["beta_denom"], axis=0)
-        beta = np.linalg.solve(beta_denom, beta_nume).T[0]
+        beta = np.linalg.solve(beta_denom, beta_nume)
     else:
         beta = np.array([0])
 
@@ -142,7 +125,7 @@ def random_coefs(df, y_var, x_vars, group_vars, z_vars=None):
 
     if include_z_vars:
         G_inv = np.linalg.inv(beta_stds["G"].sum(axis=0))
-        Omega = np.array(beta_stds["Omega"].to_list()).squeeze(-1).T
+        Omega = np.array(beta_stds["Omega"].to_list()).T
         beta_var = (1 / N) * G_inv @ (Omega @ Omega.T) @ G_inv.T
 
     gamma_gap = np.expand_dims((gammas - gamma), axis=-1)
