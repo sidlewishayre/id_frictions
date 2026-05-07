@@ -13,8 +13,8 @@ from settings import PROD_DATA, FINANCIAL_FRICTIONS
 def within_operator(y, x, within_transform=True, param_estimate=False):
     """
     Computes the within (projection) operator:
-        Q = I - Z (Z'Z)^(-1) Z'
-    Returns Qx and/or beta = (Z'Z)^(-1) Z'x.
+        Q = I - X (X'X)^(-1) X'
+    Returns Qx and/or beta = (X'X)^(-1) X'y.
     """
 
     # Ensure 2D
@@ -30,12 +30,12 @@ def within_operator(y, x, within_transform=True, param_estimate=False):
     I = np.eye(T)
 
     # Compute (Z'Z)^(-1) Z'
-    XtX_inv = np.linalg.inv(x.T @ x)
-    P = x @ (XtX_inv @ x.T)
+    XtX = x.T @ x
+    P = x @ np.linalg.solve(XtX, x.T)
     Q = I - P
 
     Qx = Q @ y
-    beta = XtX_inv @ (x.T @ y)
+    beta = np.linalg.solve(XtX, x.T @ y)
 
     if within_transform and not param_estimate:
         return Qx
@@ -115,9 +115,9 @@ def random_coefs(df, y_var, x_vars, group_vars, z_vars=None):
         for g in groups:
             beta_results.append(random_coefs_individual(y=y[g], x=x[g], z=z[g]))
         beta_results = pd.DataFrame(beta_results)
-        beta_nume = np.mean(beta_results["beta_nume"], axis=0)
-        beta_denom = np.mean(beta_results["beta_denom"], axis=0)
-        beta = (np.linalg.inv(beta_denom) @ beta_nume).T[0]
+        beta_nume = np.sum(beta_results["beta_nume"], axis=0)
+        beta_denom = np.sum(beta_results["beta_denom"], axis=0)
+        beta = np.linalg.solve(beta_denom, beta_nume).T[0]
     else:
         beta = np.array([0])
 
@@ -135,16 +135,15 @@ def random_coefs(df, y_var, x_vars, group_vars, z_vars=None):
         beta_stds = pd.DataFrame(beta_stds)
     gamma_info = pd.DataFrame(gamma_info)
     gammas = np.array(gamma_info["gamma"].apply(lambda x: x.reshape(-1)).to_list())
-    gamma = gammas.sum(axis=0)
-    x_prod = np.sum(gamma_info["x_prod"])
-    sigma = gamma_info["sigma"].mean() * (
-        len(groups) / (len(groups) * (T_hat - len(x_vars)))
-    )
+    gamma = gammas.mean(axis=0)
+    x_prod = np.mean(gamma_info["x_prod"])
+    N = len(groups)
+    sigma = gamma_info["sigma"].mean() / (T_hat - len(x_vars))
 
     if include_z_vars:
-        G_inv = np.linalg.inv(beta_stds["G"].mean(axis=0))
-        Omega = beta_stds["Omega"].mean(axis=0)
-        beta_var = G_inv @ (Omega * Omega.T) @ G_inv.T
+        G_inv = np.linalg.inv(beta_stds["G"].sum(axis=0))
+        Omega = np.array(beta_stds["Omega"].to_list()).squeeze(-1).T
+        beta_var = (1 / N) * G_inv @ (Omega @ Omega.T) @ G_inv.T
 
     gamma_gap = np.expand_dims((gammas - gamma), axis=-1)
     gamma_var_first_term = (gamma_gap @ gamma_gap.swapaxes(-1, -2)).mean(axis=0)
