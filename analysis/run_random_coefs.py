@@ -10,7 +10,7 @@ sys.path.append(CWD)
 from settings import PROD_DATA, FINANCIAL_FRICTIONS
 
 
-def within_operator(x, z, within_transform=True, param_estimate=False):
+def within_operator(y, x, within_transform=True, param_estimate=False):
     """
     Computes the within (projection) operator:
         Q = I - Z (Z'Z)^(-1) Z'
@@ -18,24 +18,24 @@ def within_operator(x, z, within_transform=True, param_estimate=False):
     """
 
     # Ensure 2D
+    y = np.atleast_2d(y)
+    if y.shape[0] < y.shape[1]:
+        y = y.T
+
     x = np.atleast_2d(x)
     if x.shape[0] < x.shape[1]:
         x = x.T
 
-    z = np.atleast_2d(z)
-    if z.shape[0] < z.shape[1]:
-        z = z.T
-
-    T = z.shape[0]
+    T = x.shape[0]
     I = np.eye(T)
 
     # Compute (Z'Z)^(-1) Z'
-    ZtZ_inv = np.linalg.inv(z.T @ z)
-    P = z @ (ZtZ_inv @ z.T)  # projection onto span(Z)
-    Q = I - P  # projection onto orthogonal complement
+    XtX_inv = np.linalg.inv(x.T @ x)
+    P = x @ (XtX_inv @ x.T)
+    Q = I - P
 
-    Qx = Q @ x  # within-transformed x
-    beta = ZtZ_inv @ (z.T @ x)  # coefficients from projecting x on z
+    Qx = Q @ y
+    beta = XtX_inv @ (x.T @ y)
 
     if within_transform and not param_estimate:
         return Qx
@@ -47,11 +47,11 @@ def within_operator(x, z, within_transform=True, param_estimate=False):
     raise ValueError("Must specify residuals=True or params=True")
 
 
-def random_coefs_individual(y, x, z):
-    Qy = within_operator(y, z)
-    Qx = within_operator(x, z)
-    beta_denom = x.T @ Qx
-    beta_nume = x.T @ Qy
+def random_coefs_individual(y, z, x):
+    Qy = within_operator(y, x)
+    Qz = within_operator(z, x)
+    beta_denom = z.T @ Qz
+    beta_nume = z.T @ Qy
     return {"beta_denom": beta_denom, "beta_nume": beta_nume}
 
 
@@ -63,21 +63,27 @@ def group_full_rank(x, z):
     return full_rank(x) and full_rank(z)
 
 
-def random_coefs_individual_gamma(y, x, z, beta):
-    v = y - x @ beta
-    Qv, gamma = within_operator(v, z, within_transform=True, param_estimate=True)
-    breakpoint()
+def random_coefs_individual_gamma(y, z, x, beta):
+    v = y - z @ beta
+    Qv, gamma = within_operator(v, x, within_transform=True, param_estimate=True)
     sigma = v.T @ Qv
-    z_prod = np.linalg.inv(z.T @ z)
-    return {"gamma": gamma, "sigma": sigma, "z_prod": z_prod}
+    x_prod = np.linalg.inv(x.T @ x)
+    return {
+        "gamma": gamma,
+        "sigma": sigma,
+        "x_prod": x_prod,
+    }
 
 
-def random_coefs_individual_residuals(y, x, z, beta):
-    Qx = within_operator(x, z)  # TODO this is redundant
-    Qv = within_operator(y - x @ beta, z)  # TODO this is redundant
-    Omega = x.T @ Qv
-    G = x.T @ Qx
-    return {"G": G, "Omega": Omega}
+def random_coefs_individual_residuals(y, z, x, beta):
+    Qz = within_operator(z, x)
+    Qv = within_operator(y - z @ beta, x)
+    Omega = z.T @ Qv
+    G = z.T @ Qz
+    return {
+        "G": G,
+        "Omega": Omega,
+    }
 
 
 def split_by_id(ids):
@@ -86,25 +92,34 @@ def split_by_id(ids):
     return groups
 
 
-def random_coefs(df, y_var, x_vars, z_vars, group_vars):
-
+def random_coefs(df, y_var, x_vars, group_vars, z_vars=None):
     groups = split_by_id(df[group_vars])
+
     y = df[y_var].values
     x = df[x_vars].values
-    z = df[z_vars].values
+    include_z_vars = z_vars is not None
+    if include_z_vars:
+        z = df[z_vars].values
+    else:
+        z = np.repeat(0, len(y)).reshape(-1, 1)
 
-    groups = [g for g in groups if group_full_rank(x[g], z[g])]
-
+    groups = [
+        g
+        for g in groups
+        if (group_full_rank(x[g], z[g]) if include_z_vars else full_rank(x[g]))
+    ]
     beta_results = []
     T_hat = np.mean([len(g) for g in groups])
 
-    for g in groups:
-        beta_results.append(random_coefs_individual(y=y[g], x=x[g], z=z[g]))
-    beta_results = pd.DataFrame(beta_results)
-
-    beta_nume = np.mean(beta_results["beta_nume"], axis=0)
-    beta_denom = np.mean(beta_results["beta_denom"], axis=0)
-    beta = np.linalg.solve(beta_denom, beta_nume).T[0]
+    if include_z_vars:
+        for g in groups:
+            beta_results.append(random_coefs_individual(y=y[g], x=x[g], z=z[g]))
+        beta_results = pd.DataFrame(beta_results)
+        beta_nume = np.mean(beta_results["beta_nume"], axis=0)
+        beta_denom = np.mean(beta_results["beta_denom"], axis=0)
+        beta = (np.linalg.inv(beta_denom) @ beta_nume).T[0]
+    else:
+        beta = np.array([0])
 
     gamma_info = []
     beta_stds = []
@@ -112,35 +127,87 @@ def random_coefs(df, y_var, x_vars, z_vars, group_vars):
         gamma_info.append(
             random_coefs_individual_gamma(y=y[g], x=x[g], z=z[g], beta=beta)
         )
-        beta_stds.append(random_coefs_individual_residuals(y[g], x[g], z[g], beta))
-    beta_stds = pd.DataFrame(beta_stds)
+        if include_z_vars:
+            beta_stds.append(
+                random_coefs_individual_residuals(y=y[g], x=x[g], z=z[g], beta=beta)
+            )
+    if include_z_vars:
+        beta_stds = pd.DataFrame(beta_stds)
     gamma_info = pd.DataFrame(gamma_info)
-    gammas = np.array(gamma_info["gamma"].apply(lambda x: x.reshape(-1)).to_list()).T
-    gamma = gammas.mean(axis=0)
-    z_prod = np.mean(gamma_info["z_prod"])
+    gammas = np.array(gamma_info["gamma"].apply(lambda x: x.reshape(-1)).to_list())
+    gamma = gammas.sum(axis=0)
+    x_prod = np.sum(gamma_info["x_prod"])
     sigma = gamma_info["sigma"].mean() * (
-        len(groups) / len(groups) * (T_hat - len(z_vars))
+        len(groups) / (len(groups) * (T_hat - len(x_vars)))
     )
 
-    G_inv = np.linalg.inv(beta_stds["G"].mean(axis=0))
-    Omega = beta_stds["Omega"].mean(axis=0)
-    beta_var = G_inv @ (Omega * Omega.T) @ G_inv
+    if include_z_vars:
+        G_inv = np.linalg.inv(beta_stds["G"].mean(axis=0))
+        Omega = beta_stds["Omega"].mean(axis=0)
+        beta_var = G_inv @ (Omega * Omega.T) @ G_inv.T
 
-    gamma_gap = np.expand_dims((gammas - gamma).T, axis=-1)
+    gamma_gap = np.expand_dims((gammas - gamma), axis=-1)
     gamma_var_first_term = (gamma_gap @ gamma_gap.swapaxes(-1, -2)).mean(axis=0)
-    gamma_var = gamma_var_first_term - sigma * z_prod
+    gamma_var = gamma_var_first_term - sigma * x_prod
 
-    return beta, beta_var, gamma, gamma_var
+    if include_z_vars:
+        return beta, beta_var, gamma, gamma_var
+
+    return gamma, gamma_var
 
 
 df = pd.read_csv(PROD_DATA)
 frictions = FINANCIAL_FRICTIONS
 d_frictions = ["d_" + var for var in frictions]
-x_vars = ["x_" + var for var in frictions]
+z_vars = ["x_" + var for var in frictions]
 
-for x_var, var, d_var in zip(x_vars, frictions, d_frictions):
-    df[x_var] = df[var] * df[d_var]
+for z_var, var, d_var in zip(z_vars, frictions, d_frictions):
+    df[z_var] = df[var] * df[d_var]
+
+
+# option 1: in proposal
 
 beta, beta_var, gamma, gamma_var = random_coefs(
-    df, y_var="euler_equation", x_vars=x_vars, z_vars=d_frictions, group_vars=["gvkey"]
+    df,
+    y_var="euler_equation",
+    z_vars=z_vars,
+    x_vars=d_frictions,
+    group_vars=["gvkey"],
 )
+
+# option 2: everything heterogeneous
+
+gamma, gamma_var = random_coefs(
+    df,
+    y_var="euler_equation",
+    x_vars=z_vars + d_frictions,
+    group_vars=["gvkey"],
+)
+
+# option 3: drop constant term
+
+gamma, gamma_var = random_coefs(
+    df,
+    y_var="euler_equation",
+    x_vars=z_vars,
+    group_vars=["gvkey"],
+)
+
+# option 4: completely ignore derivative
+
+gamma, gamma_var = random_coefs(
+    df,
+    y_var="euler_equation",
+    x_vars=frictions,
+    group_vars=["gvkey"],
+)
+
+
+# model = sm.OLS(df["euler_equation"], df[frictions])
+# results = model.fit()
+# results.params
+# results.summary()
+
+df[frictions].corr()
+df[z_vars].corr()
+df[frictions + d_frictions].corr()
