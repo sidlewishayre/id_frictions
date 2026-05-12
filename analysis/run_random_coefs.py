@@ -2,12 +2,16 @@ import os
 import sys
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 import statsmodels.api as sm
 
 CWD = os.path.abspath(os.path.join(__file__, os.path.pardir, os.path.pardir))
 
 sys.path.append(CWD)
-from settings import PROD_DATA, FINANCIAL_FRICTIONS
+from settings import PROD_DATA, FINANCIAL_FRICTIONS, DATA_FOLDER
+
+sys.path.append("/home/sidlh/Documents/reusable_code")
+from latex_utils.reg_to_table import coefs_to_table
 
 
 def within_operator(y, x, within_transform=True, param_estimate=False):
@@ -60,9 +64,10 @@ def random_coefs_individual_gamma(y, z, x, beta):
 
 def random_coefs_individual_residuals(y, z, x, beta):
     Qz = within_operator(z, x)
-    Qv = within_operator(y - z @ beta, x)
+    v = y - z @ beta
+    Qv = within_operator(v, x)
     Omega = z.T @ Qv
-    G = z.T @ Qz
+    G = z.T @ Qz / len(x)
     return {
         "G": G,
         "Omega": Omega,
@@ -124,9 +129,9 @@ def random_coefs(df, y_var, x_vars, group_vars, z_vars=None):
     sigma = gamma_info["sigma"].mean() / (T_hat - len(x_vars))
 
     if include_z_vars:
-        G_inv = np.linalg.inv(beta_stds["G"].sum(axis=0))
+        G_inv = np.linalg.inv(beta_stds["G"].mean(axis=0))
         Omega = np.array(beta_stds["Omega"].to_list()).T
-        beta_var = (1 / N) * G_inv @ (Omega @ Omega.T) @ G_inv.T
+        beta_var = (1 / (N * T_hat) ** 2) * G_inv @ (Omega @ Omega.T) @ G_inv.T
 
     gamma_gap = np.expand_dims((gammas - gamma), axis=-1)
     gamma_var_first_term = (gamma_gap @ gamma_gap.swapaxes(-1, -2)).mean(axis=0)
@@ -138,18 +143,27 @@ def random_coefs(df, y_var, x_vars, group_vars, z_vars=None):
     return gamma, gamma_var
 
 
-df = pd.read_csv(PROD_DATA)
 frictions = FINANCIAL_FRICTIONS
 d_frictions = ["d_" + var for var in frictions]
 z_vars = ["x_" + var for var in frictions]
 
-for z_var, var, d_var in zip(z_vars, frictions, d_frictions):
-    df[z_var] = df[var] * df[d_var]
 
+def prepare_data(df):
+    for z_var, var, d_var in zip(z_vars, frictions, d_frictions):
+        df[z_var] = df[var] * df[d_var]
+
+    reg_vars = frictions + d_frictions + z_vars
+    for var in reg_vars:
+        df[var] = df[var] / df[var].std()
+    return df
+
+
+df = pd.read_csv(PROD_DATA)
+df = prepare_data(df)
 
 # option 1: in proposal
 
-beta, beta_var, gamma, gamma_var = random_coefs(
+beta, beta_var, gamma_init, gamma_var_init = random_coefs(
     df,
     y_var="euler_equation",
     z_vars=z_vars,
@@ -159,37 +173,80 @@ beta, beta_var, gamma, gamma_var = random_coefs(
 
 # option 2: everything heterogeneous
 
-gamma, gamma_var = random_coefs(
+gamma_all, gamma_var_all = random_coefs(
     df,
     y_var="euler_equation",
     x_vars=z_vars + d_frictions,
     group_vars=["gvkey"],
 )
 
-# option 3: drop constant term
+# option 3: completely ignore derivative
 
 gamma, gamma_var = random_coefs(
     df,
     y_var="euler_equation",
-    x_vars=z_vars,
+    x_vars=frictions[1:],
     group_vars=["gvkey"],
 )
 
-# option 4: completely ignore derivative
+# option 4: baseline OLS
 
-gamma, gamma_var = random_coefs(
-    df,
-    y_var="euler_equation",
-    x_vars=frictions,
-    group_vars=["gvkey"],
+model = sm.OLS(df["euler_equation"], sm.add_constant(df[frictions]))
+results = model.fit()
+results.params
+results.tvalues
+
+
+def data_to_reg_table(b, se, pvalue=None, names=None):
+    if pvalue is None:
+        pvalue = 2 * (1 - norm.cdf(np.abs(b / se)))
+    if names is not None:
+        b = pd.Series(b, index=names)
+        se = pd.Series(se, index=names)
+        pvalue = pd.Series(pvalue, index=names)
+    return pd.DataFrame(
+        [b, se, pvalue], index=pd.Series(["b", "se", "pvalue"], name="row_names")
+    )
+
+
+reg_data = [
+    {"b": beta, "se": np.diagonal(beta_var), "names": z_vars},
+    # {"b": gamma_all[:3], "t": np.diagonal(gamma_var_all)[:3], "names": z_vars},
+    {"b": gamma, "se": np.diagonal(gamma_var), "names": frictions[1:]},
+    {"b": results.params, "se": results.bse, "pvalue": results.pvalues},
+]
+
+result_df = [data_to_reg_table(**reg) for reg in reg_data]
+
+table = coefs_to_table(
+    result_df,
+    end_cols=[],
+    var_map={
+        "x_leverage": "Leverage",
+        "x_net_worth": "Net Worth",
+        "x_var_pct": "Value at Risk",
+        "leverage": "Leverage",
+        "net_worth": "Net Worth",
+        "var_pct": "Value at Risk",
+        "const": "Constant",
+    },
+    display_se=True,
 )
+table = table.iloc[:-1]
+table.index = table.index.fillna("")
+
+print(table.fillna("").to_latex())
 
 
-# model = sm.OLS(df["euler_equation"], df[frictions])
-# results = model.fit()
-# results.params
-# results.summary()
-
-df[frictions].corr()
-df[z_vars].corr()
-df[frictions + d_frictions].corr()
+stata_df = df.merge(
+    df.groupby("gvkey")
+    .apply(lambda x: full_rank(x[frictions].values) & (x[frictions].std().min() > 0))
+    .replace(False, None)
+    .dropna()
+    .reset_index()
+    .drop(columns=[0])
+)
+stata_df["date"] = stata_df["date"].pipe(pd.to_datetime)
+stata_df.to_stata(
+    os.path.join(DATA_FOLDER, "panel_data.dta"), convert_dates={"date": "tq"}
+)

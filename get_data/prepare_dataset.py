@@ -7,7 +7,7 @@ from scipy.stats import norm
 CWD = os.path.abspath(os.path.join(__file__, os.path.pardir, os.path.pardir))
 
 sys.path.append(CWD)
-from settings import WRDS_DATA, MACRO_DATA, PROD_DATA, SIC_DATA
+from settings import WRDS_DATA, MACRO_DATA, PROD_DATA, SIC_DATA, EXTRA_COLS
 from settings import BETA, GAMMA
 from settings import FINANCIAL_FRICTIONS
 
@@ -87,7 +87,7 @@ df["var_sigma"] = df["assets"] / (df["port_std"] * df["equity"])
 # financial friction derivatives
 df["d_leverage"] = -df["debt"] / (df["equity"] ** 2)
 df["d_net_worth"] = df["debt"] / (df["assets"] ** 2)
-df["d_var_pct"] = df["d_leverage"] * norm.pdf(df["var_sigma"]) / df["port_std"]
+df["d_var_pct"] = -df["d_leverage"] * norm.pdf(df["var_sigma"]) / df["port_std"]
 
 #############################
 ### DATA CLEANING (extra) ###
@@ -95,16 +95,26 @@ df["d_var_pct"] = df["d_leverage"] * norm.pdf(df["var_sigma"]) / df["port_std"]
 
 for var in ["leverage", "var_sigma"]:
     df[var] = df[var].clip(lower=df[var].quantile(0.01), upper=df[var].quantile(0.99))
-df["var_pct"] = norm.cdf(df["var_sigma"])
+df["var_pct"] = 1 - norm.cdf(df["var_sigma"])
 
 ######################
 ### SAVING DATASET ###
 ######################
 
 final_df = df[
-    ["gvkey", "date", "euler_equation", "assets", "debt", "equity", "return"]
+    [
+        "gvkey",
+        "date",
+        "euler_equation",
+        "assets",
+        "debt",
+        "equity",
+        "return",
+        "port_std",
+    ]
     + FINANCIAL_FRICTIONS
     + [f"d_{ff}" for ff in FINANCIAL_FRICTIONS]
+    + EXTRA_COLS
 ].copy()
 final_df = final_df.dropna()
 # TODO: make sure data includes enough consecutive observations per intermediary
