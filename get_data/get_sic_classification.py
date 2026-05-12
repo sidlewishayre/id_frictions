@@ -63,6 +63,7 @@ def get_sic_classification():
     finance_bool = df["office"].str.lower().str.find("finance") != -1
     assert df[finance_bool]["intermediary_classification"].isnull().sum() == 0
     assert df[(~finance_bool) & df["intermediary_classification"].notna()].shape[0] == 2
+    # df[~df['intermediary_classification'].isnull()]
     return df[df["intermediary_classification"].notnull()].set_index("sic_code")[
         "intermediary_classification"
     ]

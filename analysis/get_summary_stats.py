@@ -5,25 +5,47 @@ import pandas as pd
 CWD = os.path.abspath(os.path.join(__file__, os.path.pardir, os.path.pardir))
 
 sys.path.append(CWD)
-from settings import PROD_DATA, SUMMARY_STATS
+from settings import PROD_DATA, SUMMARY_STATS_SIMPLE, SUMMARY_STATS_GROUP
 
 sys.path.append("/home/sidlh/Documents/reusable_code")
 from summary_stats import run_summary_stats
 
 # df = pd.read_csv(PROD_DATA)
 
-run_summary_stats(
-    folder=SUMMARY_STATS,
-    data=PROD_DATA,
-    panels={
-        "Balance Sheet": ["assets", "debt", "equity", "return"],
-        "Constructed Variables": [
-            "euler_equation",
-            "leverage",
-            "net_worth",
-            "var_pct",
-        ],
+simple_kwargs = dict(
+    folder=SUMMARY_STATS_SIMPLE,
+)
+
+group_kwargs = dict(
+    folder=SUMMARY_STATS_GROUP,
+    fns=["mean", "std", "q25", "q75"],
+    fn_names=["Mean", "Std Dev", "25th Percentile", "75th Percentile"],
+    group_var="bank",
+    # all_name="Intermediary Type",
+    latex_kwargs={
+        "page_dimensions": [15, 5],
     },
+)
+
+kwargs = dict(
+    data=PROD_DATA,
+    panels=[
+        {
+            "id": "balance_sheet",
+            "title": "Balance Sheet",
+            "variables": ["assets", "debt", "equity", "return"],
+        },
+        {
+            "id": "con_vars",
+            "title": "Constructed Variables",
+            "variables": [
+                "euler_equation",
+                "leverage",
+                "net_worth",
+                "var_pct",
+            ],
+        },
+    ],
     fns=["mean", "std", "min", "q25", "q50", "q75", "max"],
     fn_names=[
         "Mean",
@@ -34,7 +56,6 @@ run_summary_stats(
         "75th Pctile",
         "Max",
     ],
-    # group_var="bank",
     var_map={
         "assets": "Assets (\\$)",
         "debt": "Debt (\\$)",
@@ -45,6 +66,10 @@ run_summary_stats(
         "net_worth": "Net Worth",
         "var_pct": "Value at Risk",
     },
-    open_pdf=True,
-    # all_name="Intermediary Type",
+    # open_pdf=True,
 )
+
+for this_kwargs in [simple_kwargs, group_kwargs]:
+    run_summary_stats(
+        **{**kwargs, **this_kwargs},
+    )

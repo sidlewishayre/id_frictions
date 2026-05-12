@@ -14,6 +14,7 @@ from settings import (
     RETURN_COLS_CRSP,
     WRDS_DATA,
     SIC_DATA,
+    EXTRA_COLS,
 )
 from get_data.get_sic_classification import get_sic_classification
 
@@ -45,7 +46,7 @@ def get_data():
     ##########################
 
     compustat_query = f"""
-    SELECT gvkey, datadate, {get_sql_list(ASSETS_COL_COMPUSTAT + DEBT_COL_COMPUSTAT, quotes=False)}
+    SELECT gvkey, datadate, {get_sql_list(ASSETS_COL_COMPUSTAT + DEBT_COL_COMPUSTAT+EXTRA_COLS, quotes=False)}
     FROM comp.fundq
     WHERE datadate >= '{MIN_DATE}'
     AND gvkey IN ({get_sql_list(gvkey_list.gvkey, quotes=True)})
@@ -124,7 +125,7 @@ def get_data():
     df["assets"] = df[ASSETS_COL_COMPUSTAT].sum(axis=1)
     df = df.rename(columns={"ret": "return"})
 
-    final_df = df[["gvkey", "date", "debt", "assets", "return"]].copy()
+    final_df = df[["gvkey", "date", "debt", "assets", "return"] + EXTRA_COLS].copy()
 
     # make sic_data
     sic_list_df = sic_list.reset_index().rename(columns={"sic_code": "sic"})

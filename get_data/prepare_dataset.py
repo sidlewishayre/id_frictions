@@ -7,7 +7,7 @@ from scipy.stats import norm
 CWD = os.path.abspath(os.path.join(__file__, os.path.pardir, os.path.pardir))
 
 sys.path.append(CWD)
-from settings import WRDS_DATA, MACRO_DATA, PROD_DATA, SIC_DATA
+from settings import WRDS_DATA, MACRO_DATA, PROD_DATA, SIC_DATA, EXTRA_COLS
 from settings import BETA, GAMMA
 from settings import FINANCIAL_FRICTIONS
 
@@ -68,7 +68,7 @@ df["euler_equation"] = (
 )
 
 # specifying financial frictions
-df["equity"] = df["assets"] - df["debt"]
+df["equity"] = (df["assets"] - df["debt"]).clip(lower=0)
 df["leverage"] = df["assets"] / df["equity"]
 df["net_worth"] = 1 / df["leverage"]
 
@@ -83,21 +83,38 @@ df["return_std"] = group_transform(
 )
 df["port_std"] = df["vix"] * (df["return_std"] / df["vix_std"])
 df["var_sigma"] = df["assets"] / (df["port_std"] * df["equity"])
-df["var_pct"] = norm.cdf(df["var_sigma"])
 
 # financial friction derivatives
 df["d_leverage"] = -df["debt"] / (df["equity"] ** 2)
 df["d_net_worth"] = df["debt"] / (df["assets"] ** 2)
-df["d_var_pct"] = df["d_leverage"] * norm.pdf(df["var_sigma"]) / df["port_std"]
+df["d_var_pct"] = -df["d_leverage"] * norm.pdf(df["var_sigma"]) / df["port_std"]
+
+#############################
+### DATA CLEANING (extra) ###
+#############################
+
+for var in ["leverage", "var_sigma"]:
+    df[var] = df[var].clip(lower=df[var].quantile(0.01), upper=df[var].quantile(0.99))
+df["var_pct"] = 1 - norm.cdf(df["var_sigma"])
 
 ######################
 ### SAVING DATASET ###
 ######################
 
 final_df = df[
-    ["gvkey", "date", "euler_equation", "assets", "debt", "equity", "return"]
+    [
+        "gvkey",
+        "date",
+        "euler_equation",
+        "assets",
+        "debt",
+        "equity",
+        "return",
+        "port_std",
+    ]
     + FINANCIAL_FRICTIONS
     + [f"d_{ff}" for ff in FINANCIAL_FRICTIONS]
+    + EXTRA_COLS
 ].copy()
 final_df = final_df.dropna()
 # TODO: make sure data includes enough consecutive observations per intermediary
@@ -117,5 +134,6 @@ assert final_df["bank"].isnull().sum() == 0, "some gvkeys missing bank classific
 assert (final_df["bank"] == "Bank").sum() > 0, "no banks found"
 
 final_df = final_df.replace([np.inf, -np.inf], np.nan)
+final_df = final_df.dropna()
 
 final_df.to_csv(PROD_DATA, index=False)
